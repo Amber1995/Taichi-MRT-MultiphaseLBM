@@ -4,7 +4,8 @@ import math
 from sympy import inverse_mellin_transform
 from pyevtk.hl import gridToVTK
 
-ti.init(arch=ti.cpu, dynamic_index=True, cpu_max_num_threads=36)
+
+ti.init(arch=ti.cpu,dynamic_index=True)
 
 # LBM parameters
 Q = 19
@@ -27,38 +28,118 @@ w = np.array(
     [t0, t1, t1, t1, t1, t1, t1, t2, t2, t2, t2, t2, t2, t2, t2, t2, t2, t2, t2]
 )
 
+
 # x component of predefined velocity in Q directions
-e_xyz_np = np.array(
-    [
-        [0, 1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0],
-        [0, 0, 0, 1, -1, 0, 0, 1, -1, -1, 1, 0, 0, 0, 0, 1, -1, 1, -1],
-        [0, 0, 0, 0, 0, 1, -1, 0, 0, 0, 0, 1, -1, -1, 1, 1, -1, -1, 1],
-    ]
-)
-e_xyz = ti.Vector.field(Q, dtype=ti.f32, shape=(3))
-e_xyz.from_numpy(e_xyz_np)
+e_xyz_list = [
+    [0, 0, 0],
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+    [1, 1, 0],
+    [-1, -1, 0],
+    [1, -1, 0],
+    [-1, 1, 0],
+    [1, 0, 1],
+    [-1, 0, -1],
+    [1, 0, -1],
+    [-1, 0, 1],
+    [0, 1, 1],
+    [0, -1, -1],
+    [0, 1, -1],
+    [0, -1, 1],
+]
+
+# reversed_e_xyz_np stores the index of the opposite component to every component in e_xyz_np
+# For example, for [1,0,0], the opposite component is [-1,0,0] which has the index of 2 in e_xyz
+reversed_e_np = np.array([e_xyz_list.index([-a for a in e]) for e in e_xyz_list])
+print(reversed_e_np)
 
 # Predefined compound types
 i32_vec3d = ti.types.vector(3, ti.i32)
+f32_vec3d = ti.types.vector(3, ti.f32)
+
+# MRT operator
+niu = 0.1
+tau_f=3.0*niu+0.5
+s_v=1.0/tau_f
+s_other=8.0*(2.0-s_v)/(8.0-s_v)
+S_dig_np = np.array([0,s_v,s_v,0,s_other,0,s_other,0,s_other, s_v, s_v,s_v,s_v,s_v,s_v,s_v,s_other,s_other,s_other])
+
+# M_np = np.array([[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+# [-1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1],
+# [1,-2,-2,-2,-2,-2,-2,1,1,1,1,1,1,1,1,1,1,1,1],
+# [0,1,-1,0,0,0,0,1,-1,1,-1,1,-1,1,-1,0,0,0,0],
+# [0,-2,2,0,0,0,0,1,-1,1,-1,1,-1,1,-1,0,0,0,0],
+# [0,0,0,1,-1,0,0,1,-1,-1,1,0,0,0,0,1,-1,1,-1],
+# [0,0,0,-2,2,0,0,1,-1,-1,1,0,0,0,0,1,-1,1,-1],
+# [0,0,0,0,0,1,-1,0,0,0,0,1,-1,-1,1,1,-1,-1,1],
+# [0,0,0,0,0,-2,2,0,0,0,0,1,-1,-1,1,1,-1,-1,1],
+# [0,2,2,-1,-1,-1,-1,1,1,1,1,1,1,1,1,-2,-2,-2,-2],
+# [0,-2,-2,1,1,1,1,1,1,1,1,1,1,1,1,-2,-2,-2,-2],
+# [0,0,0,1,1,-1,-1,1,1,1,1,-1,-1,-1,-1,0,0,0,0],
+# [0,0,0,-1,-1,1,1,1,1,1,1,-1,-1,-1,-1,0,0,0,0],
+# [0,0,0,0,0,0,0,1,1,-1,-1,0,0,0,0,0,0,0,0],
+# [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,-1,-1],
+# [0,0,0,0,0,0,0,0,0,0,0,1,1,-1,-1,0,0,0,0],
+# [0,0,0,0,0,0,0,1,-1,1,-1,-1,1,-1,1,0,0,0,0],
+# [0,0,0,0,0,0,0,-1,1,1,-1,0,0,0,0,1,-1,1,-1],
+# [0,0,0,0,0,0,0,0,0,0,0,1,-1,-1,1,-1,1,1,-1]])
+
+M_np = np.array([[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+[-30,-11,-11,-11,-11,-11,-11,8,8,8,8,8,8,8,8,8,8,8,8],
+[12,-4,-4,-4,-4,-4,-4,1,1,1,1,1,1,1,1,1,1,1,1],
+[0,1,-1,0,0,0,0,1,-1,1,-1,0,0,1,-1,1,-1,0,0],
+[0,-4,4,0,0,0,0,1,-1,1,-1,0,0,1,-1,1,-1,0,0],
+[0,0,0,1,-1,0,0,1,-1,0,0,1,-1,-1,1,0,0,1,-1],
+[0,0,0,-4,4,0,0,1,-1,0,0,1,-1,-1,1,0,0,1,-1],
+[0,0,0,0,0,1,-1,0,0,1,-1,1,-1,0,0,-1,1,-1,1],
+[0,0,0,0,0,-4,4,0,0,1,-1,1,-1,0,0,-1,1,-1,1],
+[0,2,2,-1,-1,-1,-1,1,1,1,1,-2,-2,1,1,1,1,-2,-2],
+[0,-4,-4,2,2,2,2,1,1,1,1,-2,-2,1,1,1,1,-2,-2],
+[0,0,0,1,1,-1,-1,1,1,-1,-1,0,0,1,1,-1,-1,0,0],
+[0,0,0,-2,-2,2,2,1,1,-1,-1,0,0,1,1,-1,-1,0,0],
+[0,0,0,0,0,0,0,1,1,0,0,0,0,-1,-1,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,-1,-1],
+[0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,-1,-1,0,0],
+[0,0,0,0,0,0,0,1,-1,-1,1,0,0,1,-1,-1,1,0,0],
+[0,0,0,0,0,0,0,-1,1,0,0,1,-1,1,-1,0,0,1,-1],
+[0,0,0,0,0,0,0,0,0,1,-1,-1,1,0,0,-1,1,1,-1]])
+
+inv_M_np = np.linalg.inv(M_np)
 
 # Input paramters
-lx = ly = lz = 100
+lx = ly = lz = 120
+x = np.linspace(0, lx, lx)
+y = np.linspace(0, ly, ly)
+z = np.linspace(0, lz, lz)
+X, Y, Z = np.meshgrid(x, y, z, indexing="ij")
+
 IniPerturbRate = 1
-rho0 = 0.2
+rho0 = 0.25
 carn_star = True
 T_Tc = 0.7
 G = -1.0
-inject_type = 0  # 0: fluid nodes, 1: gas nodes, 2: liquid nodes
-rho_inject_period = 1000
-rho_increment = 0.005
+inject_type = 2  # 0: fluid nodes, 1: gas nodes, 2: liquid nodes
+rho_inject_period = 2000
+rho_increment = 0.002
 rhol_spinodal = 0.2725
 rhog_spinodal = 0.0484
 rhos = 0.35
-tau = 1.0  # specify the relaxaton time (only for BGK operator)
 
+tau = 1.0  # specify the relaxaton time (only for BGK operator)
+inv_tau = 1/tau
+
+# BRK = False
+A = tau
+MRT = True #if false, we use BGK operator instead
+if MRT: # Refer to Table 6.1 in Kruger's book
+    A = 0.5
 
 # Writing input model (here we create 8 20-lu-diameter spheres which are uniformly stacked)
-grain_diameter = 25
+grain_diameter = 30
 grain_number = math.floor(lx / grain_diameter)
 with open(
     "./lx" + str(lx) + "_" + str(int(grain_diameter)),
@@ -74,8 +155,11 @@ with open(
                 f.write(str(y) + "\n")
                 f.write(str(z) + "\n")
                 f.write(str(grain_diameter / 2 * 1.01) + "\n")
-is_solid_np = np.zeros((lx, ly, lz), dtype=np.int32)
+
+
+solid_np = np.zeros((lx, ly, lz), dtype=np.int8)
 solid_count = 0
+
 def place_sphere(x, y, z, R):
 
     xmin = x - R
@@ -117,8 +201,9 @@ def place_sphere(x, y, z, R):
                         near_py -= ly
                     if near_pz >= lz:
                         near_pz -= lz
-                    is_solid_np[near_px, near_py, near_pz] = 1
-                    
+                    solid_np[near_px, near_py, near_pz] = 1
+
+
 def read_positions(position_filename):
     global solid_count
     i = 0
@@ -140,14 +225,17 @@ def read_positions(position_filename):
             solid_count += 1
             place_sphere(x, y, z, r)
 
+
 read_positions("./lx" + str(lx) + "_" + str(int(grain_diameter)))
 print(
     "The computational domain has {} grains with {} lu in diameter.".format(
         solid_count, grain_diameter
     ),
 )
-is_solid = ti.field(ti.i32, shape=(lx, ly, lz))
-is_solid.from_numpy(is_solid_np)
+
+
+get_ipython().run_line_magic('load_ext', 'nb_black')
+from zipimport import zipimporter
 
 
 @ti.data_oriented
@@ -161,95 +249,57 @@ class lbm_single_phase:
         self.nb_fluid_nodes = ti.field(ti.i32,shape=())
         self.saturation = ti.field(ti.f32,shape=())
         self.suction = ti.field(ti.f32,shape=())
+        
+        # self.nb_solid_nodes[None] = 0
+        # self.nb_fluid_nodes[None] = 0
+        # self.saturation[None] = 0.
+        # self.suction[None] = 0.
 
-        self.collide_f = ti.Vector.field(19, ti.f32)
-        self.stream_f = ti.Vector.field(19, ti.f32)
-        self.rho = ti.field(ti.f32)
         self.pressure = ti.field(ti.f32)
-        self.psi = ti.field(ti.f32)
         self.force = ti.Vector.field(3, ti.f32)
         self.v = ti.Vector.field(3, ti.f32)
-        force.fill(0.)
- 
-        n_mem_partition = 2  # Generate blocks of 2X2x2
 
-        block = ti.root.pointer(
-            ti.ijk,
-            (
-                lx // n_mem_partition,
-                ly // n_mem_partition,
-                lz // n_mem_partition,
-            ),
-        )
-        self.cell = block.bitmasked(
-            ti.ijk, (n_mem_partition, n_mem_partition, n_mem_partition)
-        )# dense or bitmasked
-        self.cell.place(
-            self.rho,
-            self.pressure,
-            self.collide_f,
-            self.stream_f,
-            self.psi,
-            self.force,
-            self.v, 
-        )
+        self.collide_f = ti.Vector.field(Q, ti.f32)
+        self.stream_f = ti.Vector.field(Q, ti.f32)
 
-        self.S_dig = ti.Vector.field(19,ti.f32,shape=())
-        
-        self.niu = 0.16667
-        self.tau_f=3.0*self.niu+0.5
-        self.s_v=1.0/self.tau_f
-        self.s_other=8.0*(2.0-self.s_v)/(8.0-self.s_v)
+        self.is_solid = ti.field(ti.i8,shape=(lx, ly, lz))
+        self.rho = ti.field(ti.f32,shape=(lx, ly, lz))
+    
+        n_mem_partition = 3  # Generate blocks of 3X3x3
 
-        self.S_dig[None] = ti.Vector([0,self.s_v,self.s_v,0,self.s_other,0,            self.s_other,0,self.s_other, self.s_v, self.s_v,self.s_v,self.s_v,                self.s_v,self.s_v,self.s_v,self.s_other,self.s_other,self.s_other])
+        cell1 = ti.root.pointer(ti.ijk, (lx//n_mem_partition+1,ly//n_mem_partition+1,lz//n_mem_partition+1))
+
+        # cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.v)
+        # cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.pressure)
+        # cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.force)
+        # cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.collide_f)
+        # cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.stream_f)
+
+        cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.v)
+        cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.pressure)
+        cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.force)
+        cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.collide_f)
+        cell1.dense(ti.ijk, (n_mem_partition,n_mem_partition,n_mem_partition)).place(self.stream_f)
+
         self.M = ti.Matrix.field(19, 19, ti.f32, shape=())
         self.inv_M = ti.Matrix.field(19,19,ti.f32, shape=())
-        # self.M = ti.field(ti.f32, shape=(19,19))
-        # self.inv_M = ti.field(ti.f32, shape=(19,19))        
-        M_np = np.array([[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [-1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,-2,-2,-2,-2,-2,-2,1,1,1,1,1,1,1,1,1,1,1,1],
-        [0,1,-1,0,0,0,0,1,-1,1,-1,1,-1,1,-1,0,0,0,0],
-        [0,-2,2,0,0,0,0,1,-1,1,-1,1,-1,1,-1,0,0,0,0],
-        [0,0,0,1,-1,0,0,1,-1,-1,1,0,0,0,0,1,-1,1,-1],
-        [0,0,0,-2,2,0,0,1,-1,-1,1,0,0,0,0,1,-1,1,-1],
-        [0,0,0,0,0,1,-1,0,0,0,0,1,-1,-1,1,1,-1,-1,1],
-        [0,0,0,0,0,-2,2,0,0,0,0,1,-1,-1,1,1,-1,-1,1],
-        [0,2,2,-1,-1,-1,-1,1,1,1,1,1,1,1,1,-2,-2,-2,-2],
-        [0,-2,-2,1,1,1,1,1,1,1,1,1,1,1,1,-2,-2,-2,-2],
-        [0,0,0,1,1,-1,-1,1,1,1,1,-1,-1,-1,-1,0,0,0,0],
-        [0,0,0,-1,-1,1,1,1,1,1,1,-1,-1,-1,-1,0,0,0,0],
-        [0,0,0,0,0,0,0,1,1,-1,-1,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,-1,-1],
-        [0,0,0,0,0,0,0,0,0,0,0,1,1,-1,-1,0,0,0,0],
-        [0,0,0,0,0,0,0,1,-1,1,-1,-1,1,-1,1,0,0,0,0],
-        [0,0,0,0,0,0,0,-1,1,1,-1,0,0,0,0,1,-1,1,-1],
-        [0,0,0,0,0,0,0,0,0,0,0,1,-1,-1,1,-1,1,1,-1]])
-        inv_M_np = np.linalg.inv(M_np)
-        self.M[None] = ti.Matrix([[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
-        [-1,0,0,0,0,0,0,1,1,1,1,1,1,1,1,1,1,1,1],
-        [1,-2,-2,-2,-2,-2,-2,1,1,1,1,1,1,1,1,1,1,1,1],
-        [0,1,-1,0,0,0,0,1,-1,1,-1,1,-1,1,-1,0,0,0,0],
-        [0,-2,2,0,0,0,0,1,-1,1,-1,1,-1,1,-1,0,0,0,0],
-        [0,0,0,1,-1,0,0,1,-1,-1,1,0,0,0,0,1,-1,1,-1],
-        [0,0,0,-2,2,0,0,1,-1,-1,1,0,0,0,0,1,-1,1,-1],
-        [0,0,0,0,0,1,-1,0,0,0,0,1,-1,-1,1,1,-1,-1,1],
-        [0,0,0,0,0,-2,2,0,0,0,0,1,-1,-1,1,1,-1,-1,1],
-        [0,2,2,-1,-1,-1,-1,1,1,1,1,1,1,1,1,-2,-2,-2,-2],
-        [0,-2,-2,1,1,1,1,1,1,1,1,1,1,1,1,-2,-2,-2,-2],
-        [0,0,0,1,1,-1,-1,1,1,1,1,-1,-1,-1,-1,0,0,0,0],
-        [0,0,0,-1,-1,1,1,1,1,1,1,-1,-1,-1,-1,0,0,0,0],
-        [0,0,0,0,0,0,0,1,1,-1,-1,0,0,0,0,0,0,0,0],
-        [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,-1,-1],
-        [0,0,0,0,0,0,0,0,0,0,0,1,1,-1,-1,0,0,0,0],
-        [0,0,0,0,0,0,0,1,-1,1,-1,-1,1,-1,1,0,0,0,0],
-        [0,0,0,0,0,0,0,-1,1,1,-1,0,0,0,0,1,-1,1,-1],
-        [0,0,0,0,0,0,0,0,0,0,0,1,-1,-1,1,-1,1,1,-1]])
-        self.inv_M[None] = ti.Matrix(inv_M_np)
+        self.S_dig = ti.Vector.field(19,ti.f32,shape=())
+        self.e_xyz = ti.Vector.field(3, dtype=ti.i32, shape=(Q))
+        self.e_xyz.from_numpy(np.array(e_xyz_list))
+        self.reversed_e_index = ti.field(dtype=ti.i32, shape=(Q))
+        self.reversed_e_index.from_numpy(reversed_e_np)
         
+        self.M[None] = ti.Matrix(M_np)
+        self.inv_M[None] = ti.Matrix(inv_M_np)
+        self.S_dig.from_numpy(S_dig_np)
+        self.is_solid.from_numpy(solid_np)
+
         ti.static(self.inv_M)
-        ti.static(self.M)
+        ti.static(self.is_solid)
         ti.static(self.S_dig)
+        ti.static(self.M)
+        ti.static(self.e_xyz)
+        ti.static(self.reversed_e_index)
 
     @ti.func
     def Press(self, rho_value) -> ti.f32:
@@ -284,195 +334,203 @@ class lbm_single_phase:
         else:
             return 1.0 - ti.exp(-rho_value)
 
-    @ti.kernel
-    def init_field(self):
-        for x,y,z in ti.ndrange(lx, ly, lz):
-            if is_solid[x,y,z]:
-                for q in ti.static(range(Q)):
-                    next_x, next_y, next_z = self.neighbor_node(x,y,z,q)
-                    if is_solid[next_x, next_y, next_z] == 0:
-                        self.rho[x,y,z] = rhos
-                        self.psi[x,y,z] = self.Psi(rhos)
-                        
-            else is_solid[x,y,z] == 0:
-                self.rho[x,y,z] = rho0 * (
-                    1.0 + IniPerturbRate * (ti.random(dtype=ti.f32) - 0.5)
-                )
-                for q in ti.static(range(Q)):
-                    self.collide_f[x,y,z][q] = t[q] * self.rho[x,y,z]
-                    self.stream_f[x,y,z][q] = t[q] * self.rho[x,y,z]
+    @ti.func
+    def force_vec(self,local_pos) -> f32_vec3d:
+        force_vec = ti.Vector([0., 0.,0.])
+        # local_pos = ti.Vector([x,y,z])
+        local_psi = self.Psi(self.rho[local_pos])
+        for i in ti.static(range(3)):
+            for s in ti.static(range(1,Q)):    
+                neighbor_pos = self.periodic_index(local_pos+self.e_xyz[s])
+                neighbor_psi = self.Psi(self.rho[neighbor_pos])
+                force_vec[i] += (w[s] * neighbor_psi * self.e_xyz[s][i])
+        force_vec *=(-G* local_psi) 
+        return force_vec
 
-    # check if sparse storage works!
-    @ti.kernel
-    def activity_checking(self):
-        nb_active_nodes = 0
-        nb_solid_nodes = 0
-        for x,y,z in self.rho:
-            if x < lx and y < ly and z< lz:
-                nb_active_nodes += 1
-                if is_solid[x,y,z]:
-                    self.nb_solid_nodes[None] +=1
-        self.nb_fluid_nodes[None] = nb_active_nodes-self.nb_solid_nodes[None]
+    @ti.func
+    def velocity_vec(self,local_pos) -> f32_vec3d:
 
-    @ti.kernel
-    def collision(self):
-        """Update fluid density"""
-        for x,y,z in self.rho:
-            if is_solid[x,y,z] == 0:
-                self.rho[x,y,z] = self.stream_f[x,y,z].sum()
+        velocity_vec = ti.Vector([0., 0.,0.])
+        for i in ti.static(range(3)):
+            for s in ti.static(range(Q)):
+                velocity_vec[i] += (self.collide_f[local_pos][s]* self.e_xyz[s][i])
+           
+            velocity_vec[i] += A*self.force[local_pos][i]
+            
+            velocity_vec[i]/=self.rho[local_pos]
 
-                if self.step % rho_inject_period == 0 and self.step:
-                    if self.inject_type == 0:
-                        self.rho[x,y,z] += rho_increment
-                    elif self.inject_type == 1:
-                        if self.rho[x,y,z] < rhol_spinodal:
-                            self.rho[x,y,z] += rho_increment
-                    else:
-                        if self.rho[x,y,z] >= rhol_spinodal:
-                            self.rho[x,y,z] += rho_increment
-
-                self.pressure[x,y,z] = self.Press(self.rho[x,y,z])
-                self.psi[x,y,z] = self.Psi(self.rho[x,y,z])
+        return velocity_vec
 
     @ti.func
     def meq_vec(self,rho_local,u):
         out = ti.Vector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
-        out[0] = rho_local
-        out[1] = u.dot(u) 
-        out[3] = u[0]    
-        out[5] = u[1]    
-        out[7] = u[2]
-        out[9] = 2*u.x*u.x-u.y*u.y-u.z*u.z        
+        
+        # Taichi-LBM3D: A Single-Phase and Multiphase Lattice Boltzmann Solver on Cross-Platform Multicore CPU/GPUs
+        # out[0] = rho_local
+        # out[3] = u[0]
+        # out[5] = u[1]
+        # out[7] = u[2]
+        # out[1] = u.dot(u)    
+        # out[9] = 2*u.x*u.x-u.y*u.y-u.z*u.z
+        # out[11] = u.y*u.y-u.z*u.z
+        # out[13] = u.x*u.y
+        # out[14] = u.y*u.z                            
+        # out[15] = u.x*u.z
+
+        # The D3Q19 Gram-Schmidt equilibrium moments
+        out[0] = 1
+        out[1] = -11+19*u.dot(u)
+        out[2] = 3-11/2*u.dot(u)
+        out[3] = u.x
+        out[4] = -2/3*u.x
+        out[5] = u.y
+        out[6] = -2/3*u.y
+        out[7] = u.z
+        out[8] = -2/3*u.z
+        out[9] = 2*u.x*u.x-u.y*u.y-u.z*u.z
+        out[10] = -out[9]/2
         out[11] = u.y*u.y-u.z*u.z
+        out[12] = -out[11]/2
         out[13] = u.x*u.y
         out[14] = u.y*u.z
         out[15] = u.x*u.z
-        return out
+        return out*rho_local
+
+    @ti.kernel
+    def init_field(self):
+
+        self.nb_fluid_nodes[None] = 0
+
+        for x,y,z in self.is_solid: 
+            self.rho[x,y,z] = rhos      
+
+            if self.is_solid[x,y,z] == 0:
+                self.rho[x,y,z] = rho0 * (1.0 + IniPerturbRate * (ti.random(ti.f32) - 0.5))
+                self.nb_fluid_nodes[None] +=1
+
+                for q in ti.static(range(Q)):
+                    self.collide_f[x,y,z][q] = t[q] * self.rho[x,y,z]
+                    self.stream_f[x,y,z][q] = t[q] * self.rho[x,y,z]
+            
+            else:
+                self.rho[x,y,z] = rhos
+
+    # check if sparse storage works!
+    @ti.kernel
+    def activity_checking(self):
+        self.nb_fluid_nodes[None] = 0
+        self.nb_solid_nodes[None] = 0
+        for x,y,z in self.collide_f:
+            if x<lx and y<ly and z<lz:
+                self.nb_fluid_nodes[None] +=1
+                if self.is_solid[x,y,z] == 1:
+                    self.nb_solid_nodes[None] +=1
+        self.nb_fluid_nodes[None] -= self.nb_solid_nodes[None]
+    
+    @ti.kernel
+    def collision(self):
+        for I in ti.grouped(self.collide_f):
+            if (I.x < lx and I.y<ly and I.z<lz and self.is_solid[I] == 0):
+                self.force[I] = self.force_vec(I)
+                self.v[I] = self.velocity_vec(I)
+
+                if ti.static(MRT):
+                    """MRT operator"""
+                    Mxf = self.M[None]@self.collide_f[I] 
+                    m_eq = self.meq_vec(self.rho[I],self.v[I])
+                    SxMf_minus_meq = self.S_dig[None]*(m_eq-Mxf)
+                    self.collide_f[I] += self.inv_M[None]@SxMf_minus_meq
+                    
+                    # Method 1：m_eq = M@f_eq
+                    # f_eq = ti.Vector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
+                    # u_squ = self.v[I].dot(self.v[I])
+                    # for s in ti.static(range(Q)):
+                    #     eu = self.e_xyz[s].dot(self.v[I])
+                    #     f_eq[s] = t[s] * self.rho[I] *(1.0 + 3.0 * eu \
+                    #         + 4.5 * eu * eu - 1.5 * u_squ) -self.collide_f[I][s]
+                    # Mxf_eq = self.M[None]@f_eq # M*f = M@f_eq
+                    
+                    # Method 2: 
+                    # meq = self.meq_vec(self.rho[I],self.v[I]) # m_eq = M@f_eq
+                    # t[s] * self.rho[I] *(1.0 + 3.0 * eu \
+                    #         + 4.5 * eu * eu - 1.5 * u_squ) -self.collide_f[I][s]
+                    # m_temp = -self.S_dig[None]*(m_temp-meq)
+                    # for s in ti.static(range(Q)):
+                    #     f_guo=0.0
+                    #     for l in ti.static(range(Q)):
+                    #         f_guo += w[l]*((self.e_xyz[l]-self.v[I]).dot(self.force[I])+\
+                    #             (self.e_xyz[l].dot(self.v[I])*(self.e_xyz[l].dot(self.force[I]))))*self.M[None][s,l]
+                    #     m_temp[s] += (1-0.5*self.S_dig[None][s])*f_guo
+                    # self.collide_f[I] = ti.Vector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
+                    # self.collide_f[I] += self.inv_M[None]@m_temp
+                
+                else:
+                    """BGK operator"""
+                    u_squ = self.v[I].dot(self.v[I])
+                    for s in ti.static(range(Q)):
+                        eu = self.e_xyz[s].dot(self.v[I])
+                        self.collide_f[I][s] +=(t[s] * self.rho[I] *(1.0 + 3.0 * eu                             + 4.5 * eu * eu - 1.5 * u_squ) -self.collide_f[I][s]) *inv_tau
+              
+
 
     @ti.kernel
     def post_collsion(self):
-        u_x = u_y = u_z = 0.0
-
         """Calculate force and velocity"""
-        for x, y, z in self.force:
-            if is_solid[x, y, z] == 0 and x<lx and y<ly and z<lz:
-                xp = (x > 0) if (x - 1) else (lx - 1)
-                xn = (x < lx - 1) if (x + 1) else (0)
-                yp = (y > 0) if (y - 1) else (ly - 1)
-                yn = (y < ly - 1) if (y + 1) else (0)
-                zp = (z > 0) if (z - 1) else (lz - 1)
-                zn = (z < lz - 1) if (z + 1) else (0)
-
-                for i in ti.static(range(3)):
-                    self.force[x, y, z][i] = (
-                        -G* self.psi[x, y, z]* (w[1] * self.psi[xn, y, z] * e_xyz[i][1]
-                            + w[2] * self.psi[xp, y, z] * e_xyz[i][2]
-                            + w[3] * self.psi[x, yn, z] * e_xyz[i][3]
-                            + w[4] * self.psi[x, yp, z] * e_xyz[i][4]
-                            + w[5] * self.psi[x, y, zn] * e_xyz[i][5]
-                            + w[6] * self.psi[x, y, zp] * e_xyz[i][6]
-                            + w[7] * self.psi[xn, yn, z] * e_xyz[i][7]
-                            + w[8] * self.psi[xp, yp, z] * e_xyz[i][8]
-                            + w[9] * self.psi[xn, yp, z] * e_xyz[i][9]
-                            + w[10] * self.psi[xp, yn, z] * e_xyz[i][10]
-                            + w[11] * self.psi[xn, y, zn] * e_xyz[i][11]
-                            + w[12] * self.psi[xp, y, zp] * e_xyz[i][12]
-                            + w[13] * self.psi[xn, y, zp] * e_xyz[i][13]
-                            + w[14] * self.psi[xp, y, zn] * e_xyz[i][14]
-                            + w[15] * self.psi[x, yn, zn] * e_xyz[i][15]
-                            + w[16] * self.psi[x, yp, zp] * e_xyz[i][16]
-                            + w[17] * self.psi[x, yn, zp] * e_xyz[i][17]
-                            + w[18] * self.psi[x, yp, zn] * e_xyz[i][18]
-                        ))
-
-                        
-                    self.v[x, y, z][i] = (self.stream_f[x, y, z] * e_xyz[i]).sum()+ self.force[x, y, z][i]/2 
-                    
-                    # self.v[x, y, z][i] = (self.stream_f[x, y, z] * e_xyz[i]).sum()+ self.force[x,y,z][i] * tau #if it's BGK operator!
-                    # inv_rho = 1.0 / self.rho[x, y, z]
-
-                    # self.v[x, y, z][i] *= inv_rho
-
-                # BGK operator
-                # u_squ = self.v[x, y, z][0]*self.v[x, y, z][0] +\
-                #     self.v[x, y, z][1]*self.v[x, y, z][1]+self.v[x, y, z][2]*self.v[x, y, z][2]
-                
-                # for i in ti.static(range(Q)):
-                #     eu = e_xyz[0][i] * self.v[x, y, z][0] + e_xyz[1][i] * self.v[x, y, z][1] + e_xyz[2][i] * self.v[x, y, z][2] 
-                #     self.stream_f[x,y,z][i] += (t[i]*self.rho[x,y,z]*(1.0 + 3.0 * eu + 4.5 * eu * eu \
-                #         - 1.5 * u_squ)-self.stream_f[x,y,z][i])/tau  
-
-                # MRT operator   
-                m_temp = self.M[None]@self.stream_f[x, y, z]
-                meq = self.meq_vec(self.rho[x, y, z],self.v[x, y, z])
-                m_temp -= self.S_dig[None]*(m_temp-meq)
-                
-                self.stream_f[x, y, z] = ti.Vector([0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0])
-                self.stream_f[x, y, z] += self.inv_M[None]@m_temp
-
-
-    @ti.kernel
-    def swap_f(self):
-        for I in ti.grouped(self.stream_f):
-            temp = self.stream_f[I]
-            self.stream_f[I] = self.collide_f[I]
-            self.collide_f[I] = temp
-    
-    @ti.func
-    def neighbor_node(self,x:ti.i32,y:ti.i32,z:ti.i32,i:ti.i32):
-        next_x = x - e_xyz[0][i]
-        if x == 0 and e_xyz[0][i] == 1:
-            next_x = lx - 1
-        if x == lx - 1 and e_xyz[0][i] == -1:
-            next_x = 0
-
-        next_y = y - e_xyz[1][i]
-        if y == 0 and e_xyz[1][i] == 1:
-            next_y = ly - 1
-        if y == ly - 1 and e_xyz[1][i] == -1:
-            next_y = 0   
-
-        next_z = z - e_xyz[2][i]
-        if z == 0 and e_xyz[2][i] == 1:
-            next_z = lz - 1
-        if z == lz - 1 and e_xyz[2][i] == -1:
-            next_z = 0 
-            
-        return int(next_x),int(next_y),int(next_z)
-
-    @ti.kernel
-    def bounce_back(self):
         for I in ti.grouped(self.collide_f):
-            self.stream_f[I][0] = self.collide_f[I][0]
-            if is_solid[I.x,I.y,I.z]==0:
-                for i in ti.static(range(1,Q)):
-                    next_x, next_y, next_z = self.neighbor_node(I.x,I.y,I.z,i)
-                    if (is_solid[next_x,next_y,next_z]):
-                        switched_i = (i - half) if i > half else (i + half)
-                        self.stream_f[I][i] = self.collide_f[I][switched_i]
+            if (I.x < lx and I.y<ly and I.z<lz and self.is_solid[I] == 0):
+                    self.collide_f[I] = self.stream_f[I]
+                    self.rho[I] = self.collide_f[I].sum()
+
+                    if self.step % rho_inject_period == 0 and self.step:
+                            if self.inject_type == 0:
+                                self.rho[I] += rho_increment
+                            elif self.inject_type == 1:
+                                if self.rho[I] < rhol_spinodal:
+                                    self.rho[I] += rho_increment
+                            else:
+                                if self.rho[I] >= rhol_spinodal:
+                                    self.rho[I] += rho_increment
+
+    @ti.func
+    def periodic_index(self,i):
+        iout = i
+        if i[0]<0:     iout[0] = lx-1
+        if i[0]>lx-1:  iout[0] = 0
+        if i[1]<0:     iout[1] = ly-1
+        if i[1]>ly-1:  iout[1] = 0
+        if i[2]<0:     iout[2] = lz-1
+        if i[2]>lz-1:  iout[2] = 0
+
+        return iout
 
     @ti.kernel
     def streaming(self):
         for I in ti.grouped(self.collide_f):
-            if is_solid[I.x,I.y,I.z]==0 and I.x<lx and I.y<ly and I.z<lz:
-                for i in ti.static(range(1,Q)):
-                    next_x, next_y, next_z = self.neighbor_node(I.x,I.y,I.z,i)
-                    if is_solid[next_x, next_y, next_z] ==0:
-                        self.stream_f[I][i] = self.collide_f[next_x, next_y, next_z][i]
-    
+            if (I.x < lx and I.y<ly and I.z<lz and self.is_solid[I] == 0):
+                for s in ti.static(range(19)):
+                    neighbor_pos = self.periodic_index(I+self.e_xyz[s])
+                    if (self.is_solid[neighbor_pos]==0):
+                        # Push scheme:
+                        self.stream_f[neighbor_pos][s] = self.collide_f[I][s]
+                        # Pull scheme:
+                        # self.stream_f[xyz,s] = self.collide_f[neighbor_xyz,s]
+                    else:
+                        self.stream_f[I][self.reversed_e_index[s]] = self.collide_f[I][s]
+        
     def export_VTK(self, n):
-        x = np.linspace(0, lx, lx)
-        y = np.linspace(0, ly, ly)
-        z = np.linspace(0, lz, lz)
+        
+        grid_x = np.linspace(0, lx, lx)
+        grid_y = np.linspace(0, ly, ly)
+        grid_z = np.linspace(0, lz, lz)
         X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
         gridToVTK(
                 "./LB_SingelPhase_"+str(n),
-                x,
-                y,
-                z,
-                pointData={ "Solid": np.ascontiguousarray(is_solid_np),
-                            "rho": np.ascontiguousarray(self.rho.to_numpy()),
-                            "pressure": np.ascontiguousarray(self.pressure.to_numpy()),
+                grid_x,
+                grid_y,
+                grid_z,
+                pointData={ "Solid": np.ascontiguousarray(self.is_solid.to_numpy()[0:lx,0:ly,0:lz]),
+                            "rho": np.ascontiguousarray(self.rho.to_numpy()[0:lx,0:ly,0:lz]),
+                            "pressure": np.ascontiguousarray(self.pressure.to_numpy()[0:lx,0:ly,0:lz]),
                             "velocity": (   np.ascontiguousarray(self.v.to_numpy()[0:lx,0:ly,0:lz,0]), 
                                             np.ascontiguousarray(self.v.to_numpy()[0:lx,0:ly,0:lz,1]), 
                                             np.ascontiguousarray(self.v.to_numpy()[0:lx,0:ly,0:lz,2]))
@@ -487,15 +545,16 @@ class lbm_single_phase:
         vap_pressure = 0.
         average_liq_pressure = 0.
         average_vap_pressure = 0.
-        for I in ti.grouped(self.rho):
-            if is_solid[I.x,I.y,I.z]==0:
+        for I in ti.grouped(self.collide_f):
+            if (I.x < lx and I.y<ly and I.z<lz and self.is_solid[I] == 0):
+                self.pressure[I] = self.Press(self.rho[I])
                 if self.rho[I]>=rhol_spinodal:
                     nb_liq_nodes += 1
                     liq_pressure += self.pressure[I]
                 elif self.rho[I]<=rhog_spinodal:
                     nb_vap_nodes +=1
                     vap_pressure += self.pressure[I]
-             
+                
         self.saturation[None] =nb_liq_nodes/self.nb_fluid_nodes[None]
         
         if nb_liq_nodes:
@@ -507,25 +566,23 @@ class lbm_single_phase:
     
     def run(self):
         self.init_field()
-        self.activity_checking()
-        self.export_VTK(0)
         
-        while self.step < 2000:
-            self.streaming()
-            self.bounce_back()
+        print(self.nb_fluid_nodes[None])
+        while self.step < 5000:    
             self.collision()
+            self.streaming()
             self.post_collsion()
-            self.swap_f()
-            self.step+=1
-            if self.step%20 == 0:
+        
+            if self.step%100 == 0:
                 self.calc_stat()
                 print("Saturation is {} and suction is {} at step {}".format(self.saturation[None],self.suction[None],self.step))
-                self.export_VTK(self.step//20+1)
+                self.export_VTK(self.step//100)
                 print("Export No.{} vtk at step {}".format(self.step//20,self.step))
+           
+            self.step+=1 
+
 
 
 example = lbm_single_phase()
-
-example.step=0
 example.run()
 
