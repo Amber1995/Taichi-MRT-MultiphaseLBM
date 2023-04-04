@@ -32,6 +32,7 @@ If you encounter any problems while using this project, please [open an issue](h
 
 ## Contributors
 
-Qiuyu Wang
+Qiuyu Wang;
+
 Krishna Kumar
 
